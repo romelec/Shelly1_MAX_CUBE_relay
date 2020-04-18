@@ -1,8 +1,11 @@
 /**************************************************************
  * MAX Cube library
  * Connects to a cube and parses the valve percent information
+ * Done relatively quickly, not perfect but good enough !
  * 
  * Romelec 2019
+ * License CC BY-SA : do whatever you want but
+ *  cite my name/github and publish changes
  *************************************************************/
 #include "MaxCube.h"
 #include "Base64.h"
@@ -59,7 +62,7 @@ int MaxCube::update()
     do
     {
         length = client.readBytesUntil('\n', rxbuffer, sizeof(rxbuffer));
-        if (length)
+        if (length && rxbuffer[length-1] == '\r')
         {
             Serial.printf("MSG (%d): ", length);
             Serial.write(rxbuffer, length);
@@ -68,6 +71,9 @@ int MaxCube::update()
 
             switch (rxbuffer[0])
             {
+                case 'C':
+                    parseC(rxbuffer, length);
+                    break;
                 case 'L':
                     parseL(rxbuffer, length);
                     running = false;
@@ -76,12 +82,56 @@ int MaxCube::update()
                     break;
             };
         }
+        else if (length)
+        {
+            Serial.printf("Invalid MSG, length %d\n", length);
+        }
+        
     }
     while(running && client.connected());
     Serial.println("MaxCube disconnect");
     client.stop();
 
     return true;
+}
+
+void MaxCube::parseC(char* buffer, size_t length)
+{
+    //Ignore the 9 first bytes (C:xxxxxx,) and last one (\r)
+    size_t decodedLength = Base64.decodedLength(buffer+9, length-10);
+    char decodedBuffer[decodedLength];
+    Base64.decode(decodedBuffer, buffer+9, length-10);
+
+    size_t parsed_length = 0;
+
+    Serial.print("Decoded C: ");
+    for(;parsed_length < 18; parsed_length++)
+    {
+        Serial.printf("%.2X, ", decodedBuffer[parsed_length]);
+    }
+    Serial.print("\n");
+
+    struct MaxCube::C_Data_Device *C_D = (struct C_Data_Device*)&decodedBuffer[0];
+    uint32_t address = (C_D->RF_Address[0] << 16) + (C_D->RF_Address[1]<< 8) + (C_D->RF_Address[2]);
+
+    if (C_D->Device_Type[0] == 1 || C_D->Device_Type[0] == 2)
+    {
+        for (size_t i = 0; i < MAXCUBE_VALVE_COUNT; i++)
+        {
+            if (_valves[i].RF_Address == address)
+            {
+                Serial.printf("ALREADY address 0x%.8x, in pos %d\n", address, i);
+                return;
+            }
+            if (_valves[i].RF_Address == 0)
+            {
+                Serial.printf("ADD address 0x%.8x, to pos %d\n", address, i);
+                _valves[i].RF_Address = address;
+                _valves[i].Valve_Position = 0;
+                return;
+            }
+        }
+    }
 }
 
 void MaxCube::parseL(char* buffer, size_t length)
@@ -93,10 +143,10 @@ void MaxCube::parseL(char* buffer, size_t length)
 
     size_t parsed_length = 0;
 
-    Serial.print("Decoded: ");
+    Serial.print("Decoded L: ");
     for(;parsed_length < decodedLength; parsed_length++)
     {
-        Serial.printf("0x%.2x, ", decodedBuffer[parsed_length]);
+        Serial.printf("%.2X, ", decodedBuffer[parsed_length]);
     }
     Serial.print("\n");
 
@@ -117,7 +167,7 @@ void MaxCube::parseL(char* buffer, size_t length)
 
 void MaxCube::updateValve(uint32_t address, int valve)
 {
-    // 1st update if already present
+    // Udate if present
     for (size_t i = 0; i < MAXCUBE_VALVE_COUNT; i++)
     {
         if (_valves[i].RF_Address == address)
@@ -127,25 +177,7 @@ void MaxCube::updateValve(uint32_t address, int valve)
             return;
         }
     }
-
-    // Thermostats have the valve value fixed at 4, ignore this value
-    if (valve == 4)
-    {
-        Serial.printf("IGNORE address 0x%.8x, valve %d\n", address, valve);
-        return;
-    }
-
-    // 2nd add it in an empty slot
-    for (size_t i = 0; i < MAXCUBE_VALVE_COUNT; i++)
-    {
-        if (_valves[i].RF_Address == 0)
-        {
-            Serial.printf("ADD address 0x%.8x, valve %d\n", address, valve);
-            _valves[i].RF_Address = address;
-            _valves[i].Valve_Position = valve;
-            return;
-        }
-    }
+    Serial.printf("IGNORE address 0x%.8x, valve %d\n", address, valve);
 }
 
 int MaxCube::getMaxValve()

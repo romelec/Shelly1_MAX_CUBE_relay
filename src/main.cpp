@@ -8,6 +8,8 @@
  * (MAX! Remote Android app for example)
  * 
  * Romelec 2019
+ * License CC BY-SA : do whatever you want but
+ *  cite my name/github and publish changes
  *************************************************************/
 
 #include <FS.h>                   //this needs to be first, or it all crashes and burns...
@@ -17,27 +19,24 @@
 #include <WiFiManager.h>          //https://github.com/tzapu/WiFiManager
 #include <ArduinoJson.h>          //https://github.com/bblanchon/ArduinoJson
 
-#define MAXCUBE_VALVE_COUNT 3
 #include <MaxCube.h>
 
-#define UPDATE_INTERVAL 60000
-#define UPDATE_ERROR_MAX 60
+#define UPDATE_INTERVAL 60000   // Update every 1 minute
+#define UPDATE_ERROR_MAX 10     // Restart avter 10 failed updates
+#define LOOP_CNT_MAX 60*12      // Restart every 12 hours
 
 #define PIN_RELAY 4
 
-//define your default values here, if there are different values in config.json, they are overwritten.
 MaxCube cube;
 
+// Default configuration, modifiable in the web interface
 static IPAddress cube_ip(192, 168, 0, 100);
 const uint16_t cube_port = 62910;
-
 static int valve_on_limit = 25;
 static int valve_off_limit = 10;
 
-//flag for saving data
-static bool shouldSaveConfig = false;
-
 //callback notifying us of the need to save config
+static bool shouldSaveConfig = false;
 void saveConfigCallback ()
 {
     Serial.println("Should save config");
@@ -114,10 +113,9 @@ void setup()
     if (!wifiManager.autoConnect("MAXRelay", "password"))
     {
         Serial.println("failed to connect and hit timeout");
-        delay(3000);
-        //reset and try again, or maybe put it to deep sleep
-        ESP.restart();
         delay(5000);
+        ESP.restart();
+        delay(500);
     }
     Serial.println("WIFI connected");
 
@@ -162,6 +160,7 @@ void setup()
 void loop()
 {
     static int update_error_cnt = 0;
+    static int loop_cnt = 0;
     if (!cube.update())
     {
         Serial.println("could not be updated");
@@ -184,12 +183,24 @@ void loop()
     if (valve > valve_on_limit)
     {
         Serial.println("boiler ON");
-        //digitalWrite(PIN_RELAY, high);
+        digitalWrite(PIN_RELAY, HIGH);
     }
     else if (valve < valve_off_limit)
     {
         Serial.println("boiler OFF");
-        //digitalWrite(PIN_RELAY, low);
+        digitalWrite(PIN_RELAY, LOW);
+    }
+    /* Serial.printf("Free RAM: %d segmentation %d\n",
+        ESP.getFreeHeap(), ESP.getHeapFragmentation());*/
+
+    loop_cnt++;
+    if (loop_cnt > LOOP_CNT_MAX)
+    {
+        // Not realy necessary, but restart from time to time
+        Serial.println("Restarting...");
+        delay(5000);
+        ESP.restart();
+        delay(500);
     }
 
     delay(UPDATE_INTERVAL);
